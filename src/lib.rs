@@ -59,7 +59,7 @@ fn display_doubles(files: &HashMap<String, Vec<PathBuf>>) {
         .iter()
         .filter(|(_, vec)| vec.len() > 1)
         .for_each(|(f, vec)| {
-            println!("`{}` :", f);
+            println!("{} :", f);
             vec.iter()
                 .for_each(|path| println!("    - {}", path.to_string_lossy()));
         });
