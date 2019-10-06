@@ -16,12 +16,7 @@ fn main() {
     };
 
     if dir.is_dir() {
-        let res = find_doubles(&dir);
-
-        if let Err(err) = res {
-            eprintln!("{}", err);
-            exit(2);
-        }
+        find_doubles(&dir);
     } else {
         eprintln!(
             "Error: provided argument `{}` is not a directory.",

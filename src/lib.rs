@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::fs::read_dir;
-use std::io;
 use std::path::{Path, PathBuf};
 
 pub fn find_doubles<P: AsRef<Path>>(dir: &P) {
@@ -22,7 +21,7 @@ fn enter_file(known_names: &mut HashMap<String, Vec<PathBuf>>, file_path: PathBu
         panic!("Not a file : `{}`!", file_path.to_string_lossy());
     }
 
-    println!("file {}", file_path.to_string_lossy());
+    // println!("file {}", file_path.to_string_lossy());
     let file_name = file_path
         .file_name()
         .unwrap()
@@ -37,7 +36,7 @@ fn enter_dir(known_names: &mut HashMap<String, Vec<PathBuf>>, dir_path: PathBuf)
         panic!("Not a directory : `{}`!", dir_path.to_string_lossy());
     }
 
-    println!("dir  {}", dir_path.to_string_lossy());
+    // println!("dir  {}", dir_path.to_string_lossy());
     match read_dir(&dir_path) {
         Ok(entries) => entries.for_each(|entry_res| match entry_res {
             Ok(entry) => enter_dir_or_file(known_names, entry.path()),
@@ -55,7 +54,16 @@ fn enter_dir(known_names: &mut HashMap<String, Vec<PathBuf>>, dir_path: PathBuf)
     }
 }
 
-fn display_doubles(files: &HashMap<String, Vec<PathBuf>>) {}
+fn display_doubles(files: &HashMap<String, Vec<PathBuf>>) {
+    files
+        .iter()
+        .filter(|(_, vec)| vec.len() > 1)
+        .for_each(|(f, vec)| {
+            println!("`{}` :", f);
+            vec.iter()
+                .for_each(|path| println!("    - {}", path.to_string_lossy()));
+        });
+}
 
 #[cfg(test)]
 mod tests {
