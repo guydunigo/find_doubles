@@ -31,15 +31,14 @@ impl FromStr for Comparison {
             COMP_HASH => (Comparison::Hash, "SHA3-256 hash"),
             COMP_BOTH => (Comparison::Both, "file name and SHA3-256 hash"),
             _ => {
-                eprintln!(
-                    "Couldn't parse argument `{}`, provide `name`, `hash`, or `both`.",
-                    s
-                );
-                (Comparison::FileName, "file name")
+                return Err(format!(
+                    "Could not parse `{}` as comparison method, please use `{}`, `{}`, or `{}`.",
+                    s, COMP_NAME, COMP_HASH, COMP_BOTH
+                ));
             }
         };
 
-        eprintln!("Using {} to compare files and detect duplicates.", msg);
+        eprintln!("Using file {} to compare files and detect duplicates.", msg);
 
         Ok(comp)
     }

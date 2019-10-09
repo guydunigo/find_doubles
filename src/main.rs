@@ -9,7 +9,13 @@ use find_doubles::{find_doubles, Comparison};
 
 fn main() {
     let (comp, dir) = if let Some(comp) = args().nth(1) {
-        let comp: Comparison = comp.parse().unwrap();
+        let comp: Comparison = match comp.parse() {
+            Ok(comp) => comp,
+            Err(err) => {
+                eprintln!("{}", err);
+                exit(3);
+            }
+        };
 
         let dir = if let Some(dir) = args().nth(2) {
             PathBuf::from(&dir)
