@@ -2,7 +2,7 @@
 
 ## Description
 
-This crate lists all files sharing the same name in the given directory.
+This crate lists all files sharing the same name, same hash or both in the given directory.
 
 ## Usage
 
