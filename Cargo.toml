@@ -1,6 +1,6 @@
 [package]
 name = "find_doubles"
-version = "0.1.1"
+version = "0.3.0"
 authors = ["GONI Guillaume <gdn3@live.fr>"]
 edition = "2018"
 

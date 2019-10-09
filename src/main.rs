@@ -5,18 +5,27 @@ use std::env::current_dir;
 use std::path::PathBuf;
 use std::process::exit;
 
-use find_doubles::find_doubles;
+use find_doubles::{find_doubles, Comparison};
 
 fn main() {
-    let dir = if let Some(dir) = args().nth(1) {
-        PathBuf::from(&dir)
+    let (comp, dir) = if let Some(comp) = args().nth(1) {
+        let comp: Comparison = comp.parse().unwrap();
+
+        let dir = if let Some(dir) = args().nth(2) {
+            PathBuf::from(&dir)
+        } else {
+            eprintln!("No folder was provided, using current working directory...");
+            current_dir().unwrap()
+        };
+
+        (comp, dir)
     } else {
-        eprintln!("No folder was provided, using current working directory...");
-        current_dir().unwrap()
+        eprintln!("No arguments provided, using file name to find duplicates in current working directory.");
+        (Comparison::FileName, current_dir().unwrap())
     };
 
     if dir.is_dir() {
-        find_doubles(&dir);
+        find_doubles(comp, &dir);
     } else {
         eprintln!(
             "Error: provided argument `{}` is not a directory.",
