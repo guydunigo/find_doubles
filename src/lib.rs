@@ -13,11 +13,16 @@ use sha3::{Digest, Sha3_256};
 
 pub mod async_version;
 
-type FnGetFileId<E> = (dyn Fn(&PathBuf) -> Result<String, E>);
+type FnGetFileId<E> = (dyn Fn(&Path) -> Result<String, E>);
 
 const COMP_NAME: &str = "name";
 const COMP_HASH: &str = "hash";
 const COMP_BOTH: &str = "both";
+
+thread_local! {
+static CF: RefCell<isize> = const {RefCell::new(0)};
+static CD: RefCell<isize> = const {RefCell::new(0)};
+}
 
 pub enum Comparison {
     FileName,
@@ -50,32 +55,16 @@ impl FromStr for Comparison {
 pub fn find_doubles<P: AsRef<Path>>(comp: Comparison, dir: &P) {
     let mut files = HashMap::new();
     match comp {
-        Comparison::FileName => enter_dir_or_file(
+        Comparison::FileName => enter_dir(
             &mut files,
             dir.as_ref().to_path_buf(),
             &get_file_id_by_file_name,
         ),
-        Comparison::Hash => {
-            enter_dir_or_file(&mut files, dir.as_ref().to_path_buf(), &get_file_id_by_hash)
-        }
-        Comparison::Both => {
-            enter_dir_or_file(&mut files, dir.as_ref().to_path_buf(), &get_file_id_by_both)
-        }
+        Comparison::Hash => enter_dir(&mut files, dir.as_ref().to_path_buf(), &get_file_id_by_hash),
+        Comparison::Both => enter_dir(&mut files, dir.as_ref().to_path_buf(), &get_file_id_by_both),
     }
     CF.with_borrow(|cf| CD.with_borrow(|cd| println!("f {}, d {}", cf, cd)));
     // display_doubles(&files);
-}
-
-fn enter_dir_or_file<E: Display>(
-    known_names: &mut HashMap<String, Vec<PathBuf>>,
-    path: PathBuf,
-    get_file_id: &FnGetFileId<E>,
-) {
-    if path.is_file() {
-        enter_file(known_names, path, get_file_id);
-    } else if path.is_dir() {
-        enter_dir(known_names, path, get_file_id);
-    }
 }
 
 fn enter_file<E: Display>(
@@ -105,10 +94,6 @@ fn enter_file<E: Display>(
         ),
     }
 }
-thread_local! {
-static CF: RefCell<isize> = RefCell::new(0);
-static CD: RefCell<isize> = RefCell::new(0);
-}
 
 fn enter_dir<E: Display>(
     known_names: &mut HashMap<String, Vec<PathBuf>>,
@@ -127,7 +112,20 @@ fn enter_dir<E: Display>(
     // println!("dir  {}", dir_path.to_string_lossy());
     match read_dir(&dir_path) {
         Ok(entries) => entries.for_each(|entry_res| match entry_res {
-            Ok(entry) => enter_dir_or_file(known_names, entry.path(), get_file_id),
+            Ok(entry) => match entry.metadata() {
+                Ok(metadata) => {
+                    if metadata.is_dir() {
+                        enter_dir(known_names, entry.path(), get_file_id);
+                    } else if metadata.is_file() {
+                        enter_file(known_names, entry.path(), get_file_id);
+                    }
+                }
+                Err(err) => eprintln!(
+                    "Error when reading entry metadata `{}` : {}",
+                    entry.path().to_string_lossy(),
+                    err
+                ),
+            },
             Err(err) => eprintln!(
                 "Error when reading dir entry `{}` : {}",
                 dir_path.to_string_lossy(),
@@ -142,6 +140,8 @@ fn enter_dir<E: Display>(
     }
 }
 
+// TODO
+#[allow(dead_code)]
 fn display_doubles<String: Display>(files: &HashMap<String, Vec<PathBuf>>) {
     files
         .iter()
@@ -153,7 +153,7 @@ fn display_doubles<String: Display>(files: &HashMap<String, Vec<PathBuf>>) {
         });
 }
 
-fn get_file_id_by_file_name(file: &PathBuf) -> Result<String, String> {
+fn get_file_id_by_file_name(file: &Path) -> Result<String, String> {
     if let Some(name) = file.file_name() {
         Ok(name.to_string_lossy().into_owned())
     } else {
@@ -161,7 +161,7 @@ fn get_file_id_by_file_name(file: &PathBuf) -> Result<String, String> {
     }
 }
 
-fn get_file_id_by_hash(file: &PathBuf) -> io::Result<String> {
+fn get_file_id_by_hash(file: &Path) -> io::Result<String> {
     let mut hasher = Sha3_256::new();
     let file_content = read(file)?;
 
@@ -175,7 +175,7 @@ fn get_file_id_by_hash(file: &PathBuf) -> io::Result<String> {
     Ok(hash_str)
 }
 
-fn get_file_id_by_both(file: &PathBuf) -> Result<String, String> {
+fn get_file_id_by_both(file: &Path) -> Result<String, String> {
     let name = get_file_id_by_file_name(file)?;
     let hash = match get_file_id_by_hash(file) {
         Ok(hash) => hash,
