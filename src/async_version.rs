@@ -14,8 +14,6 @@ use std::rc::Rc;
 
 use sha3::{Digest, Sha3_256};
 
-// TODO
-#[allow(unused_imports)]
 use super::{display_doubles, Comparison};
 
 const MAX_OPEN_FILES: usize = 1000;
@@ -79,7 +77,7 @@ async fn find_doubles_async<P: AsRef<Path>>(ex: Rc<LocalExecutor<'_>>, comp: Com
 
     CF.with_borrow(|cf| CD.with_borrow(|cd| println!("f {}, d {}", cf, cd)));
 
-    // display_doubles(&files);
+    display_doubles(&files);
 }
 
 async fn enter_file<E: Display>(

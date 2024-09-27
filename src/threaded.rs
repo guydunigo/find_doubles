@@ -6,8 +6,6 @@ use std::sync::atomic::{AtomicIsize, Ordering};
 use std::sync::mpsc;
 use std::thread;
 
-// TODO
-#[allow(unused_imports)]
 use super::{
     display_doubles, get_file_id_by_both, get_file_id_by_file_name, get_file_id_by_hash,
     Comparison, FnGetFileId,
@@ -17,7 +15,6 @@ static CF: AtomicIsize = const { AtomicIsize::new(0) };
 static CD: AtomicIsize = const { AtomicIsize::new(0) };
 
 pub fn find_doubles<P: AsRef<Path>>(comp: Comparison, dir: &P) {
-    #[allow(unused_variables)]
     let files = thread::scope(move |s| {
         let (tx, rx) = mpsc::channel();
 
@@ -42,7 +39,7 @@ pub fn find_doubles<P: AsRef<Path>>(comp: Comparison, dir: &P) {
         CF.load(Ordering::Acquire),
         CD.load(Ordering::Acquire)
     );
-    // display_doubles(&files);
+    display_doubles(&files);
 }
 
 fn enter_file<E: Display>(
@@ -51,7 +48,6 @@ fn enter_file<E: Display>(
     get_file_id: &FnGetFileId<E>,
 ) {
     /*
-    // TODO
     if !file_path.is_file() {
         panic!("Not a file : `{}`!", file_path.to_string_lossy());
     }
@@ -75,7 +71,6 @@ fn enter_file<E: Display>(
 
 fn enter_dir(known_names: mpsc::Sender<PathBuf>, dir_path: PathBuf) {
     /*
-    // TODO
     if !dir_path.is_dir() {
         panic!("Not a directory : `{}`!", dir_path.to_string_lossy());
     }

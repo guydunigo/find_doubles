@@ -65,7 +65,7 @@ pub fn find_doubles<P: AsRef<Path>>(comp: Comparison, dir: &P) {
         Comparison::Both => enter_dir(&mut files, dir.as_ref().to_path_buf(), &get_file_id_by_both),
     }
     CF.with_borrow(|cf| CD.with_borrow(|cd| println!("f {}, d {}", cf, cd)));
-    // display_doubles(&files);
+    display_doubles(&files);
 }
 
 fn enter_file<E: Display>(
@@ -141,8 +141,6 @@ fn enter_dir<E: Display>(
     }
 }
 
-// TODO
-#[allow(dead_code)]
 fn display_doubles<String: Display>(files: &HashMap<String, Vec<PathBuf>>) {
     files
         .iter()
