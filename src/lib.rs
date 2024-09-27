@@ -1,14 +1,17 @@
+#![feature(async_closure)]
 extern crate sha3;
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::{Display, Write};
-use std::fs::read;
-use std::fs::read_dir;
+use std::fs::{read, read_dir};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use sha3::{Digest, Sha3_256};
+
+pub mod async_version;
 
 type FnGetFileId<E> = (dyn Fn(&PathBuf) -> Result<String, E>);
 
@@ -59,7 +62,8 @@ pub fn find_doubles<P: AsRef<Path>>(comp: Comparison, dir: &P) {
             enter_dir_or_file(&mut files, dir.as_ref().to_path_buf(), &get_file_id_by_both)
         }
     }
-    display_doubles(&files);
+    CF.with_borrow(|cf| CD.with_borrow(|cd| println!("f {}, d {}", cf, cd)));
+    // display_doubles(&files);
 }
 
 fn enter_dir_or_file<E: Display>(
@@ -79,9 +83,14 @@ fn enter_file<E: Display>(
     file_path: PathBuf,
     get_file_id: &FnGetFileId<E>,
 ) {
+    /*
+    // TODO
     if !file_path.is_file() {
         panic!("Not a file : `{}`!", file_path.to_string_lossy());
     }
+    */
+
+    CF.with_borrow_mut(|cf| *cf += 1);
 
     // println!("file {}", file_path.to_string_lossy());
     match get_file_id(&file_path) {
@@ -96,15 +105,24 @@ fn enter_file<E: Display>(
         ),
     }
 }
+thread_local! {
+static CF: RefCell<isize> = RefCell::new(0);
+static CD: RefCell<isize> = RefCell::new(0);
+}
 
 fn enter_dir<E: Display>(
     known_names: &mut HashMap<String, Vec<PathBuf>>,
     dir_path: PathBuf,
     get_file_id: &FnGetFileId<E>,
 ) {
+    /*
+    // TODO
     if !dir_path.is_dir() {
         panic!("Not a directory : `{}`!", dir_path.to_string_lossy());
     }
+    */
+
+    CD.with_borrow_mut(|cd| *cd += 1);
 
     // println!("dir  {}", dir_path.to_string_lossy());
     match read_dir(&dir_path) {
@@ -147,9 +165,9 @@ fn get_file_id_by_hash(file: &PathBuf) -> io::Result<String> {
     let mut hasher = Sha3_256::new();
     let file_content = read(file)?;
 
-    hasher.input(file_content);
+    hasher.update(file_content);
 
-    let hash = hasher.result();
+    let hash = hasher.finalize();
     let mut hash_str = "0x".to_string();
     for i in hash.iter() {
         write!(hash_str, "{:02x}", i).unwrap();

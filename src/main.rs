@@ -1,11 +1,10 @@
 extern crate find_doubles;
 
-use std::env::args;
-use std::env::current_dir;
+use std::env::{args, current_dir};
 use std::path::PathBuf;
 use std::process::exit;
 
-use find_doubles::{find_doubles, Comparison};
+use find_doubles::{async_version, find_doubles, Comparison};
 
 fn main() {
     let (comp, dir) = if let Some(comp) = args().nth(1) {
@@ -31,7 +30,13 @@ fn main() {
     };
 
     if dir.is_dir() {
-        find_doubles(comp, &dir);
+        if args().nth(3).is_some() {
+            async_version::find_doubles(comp, &dir);
+            println!("Async finished");
+        } else {
+            find_doubles(comp, &dir);
+            println!("Sync finished");
+        }
     } else {
         eprintln!(
             "Error: provided argument `{}` is not a directory.",
