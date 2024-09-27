@@ -3,9 +3,9 @@ extern crate smol;
 use smol::channel::{unbounded, Sender};
 use smol::fs::{read, read_dir};
 use smol::lock::Semaphore;
-use smol::pin;
 use smol::stream::StreamExt;
 use smol::{io, LocalExecutor};
+use smol::{pin, Task};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::{Display, Write};
@@ -18,7 +18,7 @@ use sha3::{Digest, Sha3_256};
 #[allow(unused_imports)]
 use super::{display_doubles, Comparison};
 
-const MAX_OPEN_FILES: usize = 900;
+const MAX_OPEN_FILES: usize = 1000;
 
 thread_local! {
 static CF: RefCell<isize> = const {RefCell::new(0)};
@@ -152,6 +152,8 @@ async fn enter_dir<'a, E: Display + 'a>(
     // println!("{:?} dir  {}", semaphore, dir_path.to_string_lossy());
 
     // Reading all at once to close de FS handle (I hope).
+    let mut dirs = Vec::new();
+    let mut files = Vec::new();
     match read_dir(&dir_path).await {
         Ok(mut entries) => {
             while let Some(entry_res) = entries.next().await {
@@ -159,22 +161,20 @@ async fn enter_dir<'a, E: Display + 'a>(
                     Ok(entry) => match entry.metadata().await {
                         Ok(metadata) => {
                             if metadata.is_dir() {
-                                ex.spawn(enter_dir(
+                                dirs.push(enter_dir(
                                     ex.clone(),
                                     semaphore.clone(),
                                     known_names.clone(),
                                     entry.path(),
                                     get_file_id,
-                                ))
-                                .detach();
+                                ));
                             } else if metadata.is_file() {
-                                ex.spawn(enter_file(
+                                files.push(enter_file(
                                     semaphore.clone(),
                                     known_names.clone(),
                                     entry.path(),
                                     get_file_id,
-                                ))
-                                .detach();
+                                ));
                             }
                         }
                         Err(err) => eprintln!(
@@ -199,6 +199,17 @@ async fn enter_dir<'a, E: Display + 'a>(
                 err
             );
         }
+    }
+
+    if !dirs.is_empty() {
+        let mut dirs_tasks = Vec::with_capacity(dirs.len());
+        ex.spawn_many(dirs, &mut dirs_tasks);
+        dirs_tasks.into_iter().for_each(Task::detach);
+    }
+    if !files.is_empty() {
+        let mut files_tasks = Vec::with_capacity(files.len());
+        ex.spawn_many(files, &mut files_tasks);
+        files_tasks.into_iter().for_each(Task::detach);
     }
 
     // CD.with_borrow_mut(|cd| *cd -= 1);

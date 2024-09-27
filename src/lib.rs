@@ -12,6 +12,7 @@ use std::str::FromStr;
 use sha3::{Digest, Sha3_256};
 
 pub mod async_version;
+pub mod threaded;
 
 type FnGetFileId<E> = (dyn Fn(&Path) -> Result<String, E>);
 
