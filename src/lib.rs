@@ -12,6 +12,7 @@ use std::str::FromStr;
 use sha3::{Digest, Sha3_256};
 
 pub mod async_version;
+pub mod multithreaded;
 pub mod threaded;
 
 type FnGetFileId<E> = (dyn Fn(&Path) -> Result<String, E>);
@@ -19,12 +20,14 @@ type FnGetFileId<E> = (dyn Fn(&Path) -> Result<String, E>);
 const COMP_NAME: &str = "name";
 const COMP_HASH: &str = "hash";
 const COMP_BOTH: &str = "both";
+const ENABLE_OUTPUT: bool = true;
 
 thread_local! {
 static CF: RefCell<isize> = const {RefCell::new(0)};
 static CD: RefCell<isize> = const {RefCell::new(0)};
 }
 
+#[derive(Clone, Copy)]
 pub enum Comparison {
     FileName,
     Hash,
@@ -142,14 +145,16 @@ fn enter_dir<E: Display>(
 }
 
 fn display_doubles<String: Display>(files: &HashMap<String, Vec<PathBuf>>) {
-    files
-        .iter()
-        .filter(|(_, vec)| vec.len() > 1)
-        .for_each(|(f, vec)| {
-            println!("{} :", f);
-            vec.iter()
-                .for_each(|path| println!("    - {}", path.to_string_lossy()));
-        });
+    if ENABLE_OUTPUT {
+        files
+            .iter()
+            .filter(|(_, vec)| vec.len() > 1)
+            .for_each(|(f, vec)| {
+                println!("{} :", f);
+                vec.iter()
+                    .for_each(|path| println!("    - {}", path.to_string_lossy()));
+            });
+    }
 }
 
 fn get_file_id_by_file_name(file: &Path) -> Result<String, String> {

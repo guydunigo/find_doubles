@@ -4,7 +4,7 @@ use std::env::{args, current_dir};
 use std::path::PathBuf;
 use std::process::exit;
 
-use find_doubles::{async_version, find_doubles, threaded, Comparison};
+use find_doubles::{async_version, find_doubles, multithreaded, threaded, Comparison};
 
 fn main() {
     let (comp, dir) = if let Some(comp) = args().nth(1) {
@@ -38,6 +38,9 @@ fn main() {
         } else if let Some("thread") = backend {
             threaded::find_doubles(comp, &dir);
             println!("Thread finished");
+        } else if let Some("multi") = backend {
+            multithreaded::find_doubles(comp, &dir);
+            println!("Multi-threaded finished");
         } else {
             find_doubles(comp, &dir);
             println!("Sync finished");

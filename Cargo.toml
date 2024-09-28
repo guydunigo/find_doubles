@@ -7,5 +7,6 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+loole = "0.3.1"
 sha3 = "0.10.8"
 smol = "2.0.2"
