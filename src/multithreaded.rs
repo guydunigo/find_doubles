@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fmt::Display;
 use std::fs::read_dir;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicIsize, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 use std::thread;
 
@@ -11,11 +11,8 @@ use loole::{unbounded, Sender};
 
 use super::{
     display_doubles, get_file_id_by_both, get_file_id_by_file_name, get_file_id_by_hash,
-    Comparison, FnGetFileId,
+    Comparison, FnGetFileId, CD, CF,
 };
-
-static CF: AtomicIsize = const { AtomicIsize::new(0) };
-static CD: AtomicIsize = const { AtomicIsize::new(0) };
 
 pub fn find_doubles<P: AsRef<Path>>(comp: Comparison, dir: &P) {
     let files = thread::scope(move |s| {

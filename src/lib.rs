@@ -1,13 +1,13 @@
 #![feature(async_closure)]
 extern crate sha3;
 
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::{Display, Write};
 use std::fs::{read, read_dir};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::sync::atomic::{AtomicIsize, Ordering};
 
 use sha3::{Digest, Sha3_256};
 
@@ -22,10 +22,8 @@ const COMP_HASH: &str = "hash";
 const COMP_BOTH: &str = "both";
 const ENABLE_OUTPUT: bool = true;
 
-thread_local! {
-static CF: RefCell<isize> = const {RefCell::new(0)};
-static CD: RefCell<isize> = const {RefCell::new(0)};
-}
+static CF: AtomicIsize = const { AtomicIsize::new(0) };
+static CD: AtomicIsize = const { AtomicIsize::new(0) };
 
 #[derive(Clone, Copy)]
 pub enum Comparison {
@@ -67,7 +65,11 @@ pub fn find_doubles<P: AsRef<Path>>(comp: Comparison, dir: &P) {
         Comparison::Hash => enter_dir(&mut files, dir.as_ref().to_path_buf(), &get_file_id_by_hash),
         Comparison::Both => enter_dir(&mut files, dir.as_ref().to_path_buf(), &get_file_id_by_both),
     }
-    CF.with_borrow(|cf| CD.with_borrow(|cd| println!("f {}, d {}", cf, cd)));
+    println!(
+        "f {}, d {}",
+        CF.load(Ordering::Acquire),
+        CD.load(Ordering::Acquire)
+    );
     display_doubles(&files);
 }
 
@@ -77,13 +79,12 @@ fn enter_file<E: Display>(
     get_file_id: &FnGetFileId<E>,
 ) {
     /*
-    // TODO
     if !file_path.is_file() {
         panic!("Not a file : `{}`!", file_path.to_string_lossy());
     }
     */
 
-    CF.with_borrow_mut(|cf| *cf += 1);
+    CF.fetch_add(1, Ordering::Relaxed);
 
     // println!("file {}", file_path.to_string_lossy());
     match get_file_id(&file_path) {
@@ -105,13 +106,12 @@ fn enter_dir<E: Display>(
     get_file_id: &FnGetFileId<E>,
 ) {
     /*
-    // TODO
     if !dir_path.is_dir() {
         panic!("Not a directory : `{}`!", dir_path.to_string_lossy());
     }
     */
 
-    CD.with_borrow_mut(|cd| *cd += 1);
+    CD.fetch_add(1, Ordering::Relaxed);
 
     // println!("dir  {}", dir_path.to_string_lossy());
     match read_dir(&dir_path) {

@@ -6,22 +6,17 @@ use smol::lock::Semaphore;
 use smol::stream::StreamExt;
 use smol::{io, LocalExecutor};
 use smol::{pin, Task};
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::{Display, Write};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::atomic::Ordering;
 
 use sha3::{Digest, Sha3_256};
 
-use super::{display_doubles, Comparison};
+use super::{display_doubles, Comparison, CD, CF};
 
 const MAX_OPEN_FILES: usize = 1000;
-
-thread_local! {
-static CF: RefCell<isize> = const {RefCell::new(0)};
-static CD: RefCell<isize> = const {RefCell::new(0)};
-}
 
 pub fn find_doubles<P: AsRef<Path>>(comp: Comparison, dir: &P) {
     let ex = Rc::new(LocalExecutor::new());
@@ -75,7 +70,11 @@ async fn find_doubles_async<P: AsRef<Path>>(ex: Rc<LocalExecutor<'_>>, comp: Com
         files.entry(file_id).or_default().push(file_path);
     }
 
-    CF.with_borrow(|cf| CD.with_borrow(|cd| println!("f {}, d {}", cf, cd)));
+    println!(
+        "f {}, d {}",
+        CF.load(Ordering::Acquire),
+        CD.load(Ordering::Acquire)
+    );
 
     display_doubles(&files);
 }
@@ -88,10 +87,9 @@ async fn enter_file<E: Display>(
 ) {
     let _lock = semaphore.acquire().await;
 
-    CF.with_borrow_mut(|cf| *cf += 1);
+    CF.fetch_add(1, Ordering::Acquire);
 
     /*
-    // TODO: sync ope
     if !file_path.is_file() {
         panic!("Not a file : `{}`!", file_path.to_string_lossy());
     }
@@ -109,7 +107,7 @@ async fn enter_file<E: Display>(
         ),
     }
 
-    // CF.with_borrow_mut(|cf| *cf -= 1);
+    // CF.fetch_sub(1, Ordering::Release);
 }
 
 async fn enter_dir<'a, E: Display + 'a>(
@@ -139,13 +137,12 @@ async fn enter_dir<'a, E: Display + 'a>(
 
     let _lock = semaphore.acquire().await;
     /*
-    // TODO: sync ope
     if !dir_path.is_dir() {
         panic!("Not a directory : `{}`!", dir_path.to_string_lossy());
     }
     */
 
-    CD.with_borrow_mut(|cd| *cd += 1);
+    CD.fetch_add(1, Ordering::Acquire);
 
     // println!("{:?} dir  {}", semaphore, dir_path.to_string_lossy());
 
@@ -210,7 +207,7 @@ async fn enter_dir<'a, E: Display + 'a>(
         files_tasks.into_iter().for_each(Task::detach);
     }
 
-    // CD.with_borrow_mut(|cd| *cd -= 1);
+    CD.fetch_sub(1, Ordering::Release);
 }
 
 async fn get_file_id_by_file_name(file: &Path) -> Result<String, String> {
