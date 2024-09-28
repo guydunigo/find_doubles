@@ -1,68 +1,55 @@
 extern crate smol;
 
-use smol::channel::{unbounded, Sender};
-use smol::fs::{read, read_dir};
+use smol::channel::{bounded, unbounded, Sender};
+use smol::fs::read_dir;
 use smol::lock::Semaphore;
 use smol::stream::StreamExt;
-use smol::LocalExecutor;
+use smol::Executor;
 use smol::{pin, Task};
 use std::collections::HashMap;
-use std::fmt::{Display, Write};
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
-use std::sync::atomic::Ordering;
+use std::sync::{atomic::Ordering, Arc};
+use std::thread;
 
-use sha3::{Digest, Sha3_256};
-
-use super::{display_doubles, Comparison, CD, CF};
+use super::{
+    async_version::{get_file_id_by_both, get_file_id_by_file_name, get_file_id_by_hash},
+    display_doubles, Comparison, CD, CF,
+};
 
 const MAX_OPEN_FILES: usize = 1000;
 
 pub fn find_doubles<P: AsRef<Path>>(comp: Comparison, dir: &P) {
-    let ex = Rc::new(LocalExecutor::new());
+    thread::scope(|s| {
+        let ex = Arc::new(Executor::new());
+        let num_threads = thread::available_parallelism().unwrap().into();
+        let mut txs = Vec::with_capacity(num_threads);
 
-    smol::block_on(ex.run(find_doubles_async(ex.clone(), comp, dir)));
+        for _ in 0..=num_threads {
+            let ex = ex.clone();
+            let (tx, rx) = bounded(1);
+            s.spawn(move || smol::block_on(ex.run(rx.recv())));
+            txs.push(tx);
+        }
+
+        let ex2 = ex.clone();
+        smol::block_on(ex.run(async {
+            find_doubles_async(ex2, comp, dir).await;
+
+            for tx in txs {
+                tx.send(()).await.unwrap();
+            }
+        }));
+    });
 }
 
-async fn find_doubles_async<P: AsRef<Path>>(ex: Rc<LocalExecutor<'_>>, comp: Comparison, dir: &P) {
+async fn find_doubles_async<P: AsRef<Path>>(ex: Arc<Executor<'_>>, comp: Comparison, dir: &P) {
     let mut files: HashMap<String, Vec<PathBuf>> = HashMap::new();
 
     let (tx, rx) = unbounded();
 
-    let semaphore = Rc::new(Semaphore::new(MAX_OPEN_FILES));
+    let semaphore = Arc::new(Semaphore::new(MAX_OPEN_FILES));
 
-    match comp {
-        Comparison::FileName => {
-            enter_dir(
-                ex,
-                semaphore,
-                tx,
-                dir.as_ref().to_path_buf(),
-                &get_file_id_by_file_name,
-            )
-            .await
-        }
-        Comparison::Hash => {
-            enter_dir(
-                ex,
-                semaphore,
-                tx,
-                dir.as_ref().to_path_buf(),
-                &get_file_id_by_hash,
-            )
-            .await
-        }
-        Comparison::Both => {
-            enter_dir(
-                ex,
-                semaphore,
-                tx,
-                dir.as_ref().to_path_buf(),
-                &get_file_id_by_both,
-            )
-            .await
-        }
-    }
+    enter_dir(ex, semaphore, tx, dir.as_ref().to_path_buf(), comp).await;
 
     pin!(rx);
 
@@ -79,11 +66,11 @@ async fn find_doubles_async<P: AsRef<Path>>(ex: Rc<LocalExecutor<'_>>, comp: Com
     display_doubles(&files);
 }
 
-async fn enter_file<E: Display>(
-    semaphore: Rc<Semaphore>,
+async fn enter_file(
+    semaphore: Arc<Semaphore>,
     known_names: Sender<(String, PathBuf)>,
     file_path: PathBuf,
-    get_file_id: &impl async Fn(&Path) -> Result<String, E>,
+    comp: Comparison,
 ) {
     let _lock = semaphore.acquire().await;
 
@@ -96,7 +83,13 @@ async fn enter_file<E: Display>(
     */
 
     // println!("file {}", file_path.to_string_lossy());
-    match get_file_id(&file_path).await {
+    let file_id = match comp {
+        Comparison::FileName => get_file_id_by_file_name(&file_path).await,
+        Comparison::Hash => get_file_id_by_hash(&file_path).await,
+        Comparison::Both => get_file_id_by_both(&file_path).await,
+    };
+
+    match file_id {
         Ok(file_id) => {
             known_names.send((file_id, file_path)).await.unwrap();
         }
@@ -110,12 +103,12 @@ async fn enter_file<E: Display>(
     // CF.fetch_sub(1, Ordering::Release);
 }
 
-async fn enter_dir<'a, E: Display + 'a>(
-    ex: Rc<LocalExecutor<'a>>,
-    semaphore: Rc<Semaphore>,
+async fn enter_dir(
+    ex: Arc<Executor<'_>>,
+    semaphore: Arc<Semaphore>,
     known_names: Sender<(String, PathBuf)>,
     dir_path: PathBuf,
-    get_file_id: &'a impl async Fn(&Path) -> Result<String, E>,
+    comp: Comparison,
 ) {
     /*
     let is_zero = format!("{:?}", semaphore)
@@ -146,7 +139,7 @@ async fn enter_dir<'a, E: Display + 'a>(
 
     // println!("{:?} dir  {}", semaphore, dir_path.to_string_lossy());
 
-    let mut dirs = Vec::new();
+    // TODO: let mut dirs = Vec::new();
     let mut files = Vec::new();
     match read_dir(&dir_path).await {
         Ok(mut entries) => {
@@ -155,19 +148,30 @@ async fn enter_dir<'a, E: Display + 'a>(
                     Ok(entry) => match entry.metadata().await {
                         Ok(metadata) => {
                             if metadata.is_dir() {
+                                /*
+                                // TODO
                                 dirs.push(enter_dir(
                                     ex.clone(),
                                     semaphore.clone(),
                                     known_names.clone(),
                                     entry.path(),
-                                    get_file_id,
+                                    comp,
                                 ));
+                                */
+                                Box::pin(enter_dir(
+                                    ex.clone(),
+                                    semaphore.clone(),
+                                    known_names.clone(),
+                                    entry.path(),
+                                    comp,
+                                ))
+                                .await;
                             } else if metadata.is_file() {
                                 files.push(enter_file(
                                     semaphore.clone(),
                                     known_names.clone(),
                                     entry.path(),
-                                    get_file_id,
+                                    comp,
                                 ));
                             }
                         }
@@ -195,48 +199,19 @@ async fn enter_dir<'a, E: Display + 'a>(
         }
     }
 
+    /*
+    // TODO
     if !dirs.is_empty() {
         let mut dirs_tasks = Vec::with_capacity(dirs.len());
         ex.spawn_many(dirs, &mut dirs_tasks);
         dirs_tasks.into_iter().for_each(Task::detach);
     }
+    */
     if !files.is_empty() {
         let mut files_tasks = Vec::with_capacity(files.len());
         ex.spawn_many(files, &mut files_tasks);
         files_tasks.into_iter().for_each(Task::detach);
     }
 
-    CD.fetch_sub(1, Ordering::Release);
-}
-
-pub async fn get_file_id_by_file_name(file: &Path) -> Result<String, String> {
-    if let Some(name) = file.file_name() {
-        Ok(name.to_string_lossy().into_owned())
-    } else {
-        Err("No name for given path.".to_string())
-    }
-}
-
-pub async fn get_file_id_by_hash(file: &Path) -> Result<String, String> {
-    let mut hasher = Sha3_256::new();
-    let file_content = read(file).await.map_err(|e| e.to_string())?;
-
-    hasher.update(file_content);
-
-    let hash = hasher.finalize();
-    let mut hash_str = "0x".to_string();
-    for i in hash.iter() {
-        write!(hash_str, "{:02x}", i).unwrap();
-    }
-    Ok(hash_str)
-}
-
-pub async fn get_file_id_by_both(file: &Path) -> Result<String, String> {
-    let name = get_file_id_by_file_name(file).await?;
-    let hash = match get_file_id_by_hash(file).await {
-        Ok(hash) => hash,
-        Err(err) => return Err(err.to_string()),
-    };
-
-    Ok(format!("{}:{}", name, hash))
+    // CD.fetch_sub(1, Ordering::Release);
 }

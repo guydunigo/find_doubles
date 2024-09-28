@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicIsize, Ordering};
 use sha3::{Digest, Sha3_256};
 
 pub mod async_version;
+pub mod multi_async;
 pub mod multithreaded;
 pub mod threaded;
 
