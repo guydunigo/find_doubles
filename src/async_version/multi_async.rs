@@ -7,18 +7,16 @@ use smol::stream::StreamExt;
 use smol::Executor;
 use smol::{pin, Task};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{atomic::Ordering, Arc};
 use std::thread;
 
 use super::{
-    async_version::{get_file_id_by_both, get_file_id_by_file_name, get_file_id_by_hash},
-    display_doubles, Comparison, CD, CF,
+    get_file_id_by_both, get_file_id_by_file_name, get_file_id_by_hash, Comparison, CD, CF,
+    MAX_OPEN_FILES,
 };
 
-const MAX_OPEN_FILES: usize = 1000;
-
-pub fn find_doubles<P: AsRef<Path>>(comp: Comparison, dir: &P) {
+pub fn find_doubles(comp: Comparison, dir: PathBuf) -> HashMap<String, Vec<PathBuf>> {
     thread::scope(|s| {
         let ex = Arc::new(Executor::new());
         let num_threads = thread::available_parallelism().unwrap().into();
@@ -33,23 +31,29 @@ pub fn find_doubles<P: AsRef<Path>>(comp: Comparison, dir: &P) {
 
         let ex2 = ex.clone();
         smol::block_on(ex.run(async {
-            find_doubles_async(ex2, comp, dir).await;
+            let files = find_doubles_async(ex2, comp, dir).await;
 
             for tx in txs {
                 tx.send(()).await.unwrap();
             }
-        }));
-    });
+
+            files
+        }))
+    })
 }
 
-async fn find_doubles_async<P: AsRef<Path>>(ex: Arc<Executor<'_>>, comp: Comparison, dir: &P) {
+async fn find_doubles_async(
+    ex: Arc<Executor<'_>>,
+    comp: Comparison,
+    dir: PathBuf,
+) -> HashMap<String, Vec<PathBuf>> {
     let mut files: HashMap<String, Vec<PathBuf>> = HashMap::new();
 
     let (tx, rx) = unbounded();
 
     let semaphore = Arc::new(Semaphore::new(MAX_OPEN_FILES));
 
-    enter_dir(ex, semaphore, tx, dir.as_ref().to_path_buf(), comp).await;
+    enter_dir(ex, semaphore, tx, dir, comp).await;
 
     pin!(rx);
 
@@ -57,13 +61,7 @@ async fn find_doubles_async<P: AsRef<Path>>(ex: Arc<Executor<'_>>, comp: Compari
         files.entry(file_id).or_default().push(file_path);
     }
 
-    println!(
-        "f {}, d {}",
-        CF.load(Ordering::Acquire),
-        CD.load(Ordering::Acquire)
-    );
-
-    display_doubles(&files);
+    files
 }
 
 async fn enter_file(
@@ -111,6 +109,7 @@ async fn enter_dir(
     comp: Comparison,
 ) {
     /*
+    // Affiche un message quand le sémaphore va bloquer.
     let is_zero = format!("{:?}", semaphore)
         .chars()
         .nth("Semaphore { count: ".len())
@@ -139,7 +138,7 @@ async fn enter_dir(
 
     // println!("{:?} dir  {}", semaphore, dir_path.to_string_lossy());
 
-    // TODO: let mut dirs = Vec::new();
+    // let mut dirs = Vec::new();
     let mut files = Vec::new();
     match read_dir(&dir_path).await {
         Ok(mut entries) => {
@@ -149,7 +148,7 @@ async fn enter_dir(
                         Ok(metadata) => {
                             if metadata.is_dir() {
                                 /*
-                                // TODO
+                                // TODO enter_dir future is not Send
                                 dirs.push(enter_dir(
                                     ex.clone(),
                                     semaphore.clone(),
@@ -200,7 +199,6 @@ async fn enter_dir(
     }
 
     /*
-    // TODO
     if !dirs.is_empty() {
         let mut dirs_tasks = Vec::with_capacity(dirs.len());
         ex.spawn_many(dirs, &mut dirs_tasks);

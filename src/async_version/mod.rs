@@ -7,62 +7,36 @@ use smol::stream::StreamExt;
 use smol::LocalExecutor;
 use smol::{pin, Task};
 use std::collections::HashMap;
-use std::fmt::{Display, Write};
+use std::fmt::Write;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::atomic::Ordering;
 
 use sha3::{Digest, Sha3_256};
 
-use super::{display_doubles, Comparison, CD, CF};
+use super::{Comparison, CD, CF};
+
+pub mod multi_async;
 
 const MAX_OPEN_FILES: usize = 1000;
 
-pub fn find_doubles<P: AsRef<Path>>(comp: Comparison, dir: &P) {
+pub fn find_doubles(comp: Comparison, dir: PathBuf) -> HashMap<String, Vec<PathBuf>> {
     let ex = Rc::new(LocalExecutor::new());
-
-    smol::block_on(ex.run(find_doubles_async(ex.clone(), comp, dir)));
+    smol::block_on(ex.run(find_doubles_async(ex.clone(), comp, dir)))
 }
 
-async fn find_doubles_async<P: AsRef<Path>>(ex: Rc<LocalExecutor<'_>>, comp: Comparison, dir: &P) {
+async fn find_doubles_async(
+    ex: Rc<LocalExecutor<'_>>,
+    comp: Comparison,
+    dir: PathBuf,
+) -> HashMap<String, Vec<PathBuf>> {
     let mut files: HashMap<String, Vec<PathBuf>> = HashMap::new();
 
     let (tx, rx) = unbounded();
 
     let semaphore = Rc::new(Semaphore::new(MAX_OPEN_FILES));
 
-    match comp {
-        Comparison::FileName => {
-            enter_dir(
-                ex,
-                semaphore,
-                tx,
-                dir.as_ref().to_path_buf(),
-                &get_file_id_by_file_name,
-            )
-            .await
-        }
-        Comparison::Hash => {
-            enter_dir(
-                ex,
-                semaphore,
-                tx,
-                dir.as_ref().to_path_buf(),
-                &get_file_id_by_hash,
-            )
-            .await
-        }
-        Comparison::Both => {
-            enter_dir(
-                ex,
-                semaphore,
-                tx,
-                dir.as_ref().to_path_buf(),
-                &get_file_id_by_both,
-            )
-            .await
-        }
-    }
+    enter_dir(ex, semaphore, tx, dir, comp).await;
 
     pin!(rx);
 
@@ -70,20 +44,14 @@ async fn find_doubles_async<P: AsRef<Path>>(ex: Rc<LocalExecutor<'_>>, comp: Com
         files.entry(file_id).or_default().push(file_path);
     }
 
-    println!(
-        "f {}, d {}",
-        CF.load(Ordering::Acquire),
-        CD.load(Ordering::Acquire)
-    );
-
-    display_doubles(&files);
+    files
 }
 
-async fn enter_file<E: Display>(
+async fn enter_file(
     semaphore: Rc<Semaphore>,
     known_names: Sender<(String, PathBuf)>,
     file_path: PathBuf,
-    get_file_id: &impl async Fn(&Path) -> Result<String, E>,
+    comp: Comparison,
 ) {
     let _lock = semaphore.acquire().await;
 
@@ -96,7 +64,13 @@ async fn enter_file<E: Display>(
     */
 
     // println!("file {}", file_path.to_string_lossy());
-    match get_file_id(&file_path).await {
+    let file_id = match comp {
+        Comparison::FileName => get_file_id_by_file_name(&file_path).await,
+        Comparison::Hash => get_file_id_by_hash(&file_path).await,
+        Comparison::Both => get_file_id_by_both(&file_path).await,
+    };
+
+    match file_id {
         Ok(file_id) => {
             known_names.send((file_id, file_path)).await.unwrap();
         }
@@ -110,12 +84,12 @@ async fn enter_file<E: Display>(
     // CF.fetch_sub(1, Ordering::Release);
 }
 
-async fn enter_dir<'a, E: Display + 'a>(
-    ex: Rc<LocalExecutor<'a>>,
+async fn enter_dir(
+    ex: Rc<LocalExecutor<'_>>,
     semaphore: Rc<Semaphore>,
     known_names: Sender<(String, PathBuf)>,
     dir_path: PathBuf,
-    get_file_id: &'a impl async Fn(&Path) -> Result<String, E>,
+    comp: Comparison,
 ) {
     /*
     let is_zero = format!("{:?}", semaphore)
@@ -160,14 +134,14 @@ async fn enter_dir<'a, E: Display + 'a>(
                                     semaphore.clone(),
                                     known_names.clone(),
                                     entry.path(),
-                                    get_file_id,
+                                    comp,
                                 ));
                             } else if metadata.is_file() {
                                 files.push(enter_file(
                                     semaphore.clone(),
                                     known_names.clone(),
                                     entry.path(),
-                                    get_file_id,
+                                    comp,
                                 ));
                             }
                         }
@@ -206,10 +180,10 @@ async fn enter_dir<'a, E: Display + 'a>(
         files_tasks.into_iter().for_each(Task::detach);
     }
 
-    CD.fetch_sub(1, Ordering::Release);
+    // CD.fetch_sub(1, Ordering::Release);
 }
 
-pub async fn get_file_id_by_file_name(file: &Path) -> Result<String, String> {
+async fn get_file_id_by_file_name(file: &Path) -> Result<String, String> {
     if let Some(name) = file.file_name() {
         Ok(name.to_string_lossy().into_owned())
     } else {
@@ -217,7 +191,7 @@ pub async fn get_file_id_by_file_name(file: &Path) -> Result<String, String> {
     }
 }
 
-pub async fn get_file_id_by_hash(file: &Path) -> Result<String, String> {
+async fn get_file_id_by_hash(file: &Path) -> Result<String, String> {
     let mut hasher = Sha3_256::new();
     let file_content = read(file).await.map_err(|e| e.to_string())?;
 
@@ -231,7 +205,7 @@ pub async fn get_file_id_by_hash(file: &Path) -> Result<String, String> {
     Ok(hash_str)
 }
 
-pub async fn get_file_id_by_both(file: &Path) -> Result<String, String> {
+async fn get_file_id_by_both(file: &Path) -> Result<String, String> {
     let name = get_file_id_by_file_name(file).await?;
     let hash = match get_file_id_by_hash(file).await {
         Ok(hash) => hash,

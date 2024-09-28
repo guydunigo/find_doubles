@@ -1,36 +1,30 @@
 use std::collections::HashMap;
+use std::fmt::Display;
 use std::fs::read_dir;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
-use std::sync::mpsc;
-use std::thread;
 
 use super::{
     get_file_id_by_both, get_file_id_by_file_name, get_file_id_by_hash, Comparison, CD, CF,
 };
 
+type FnGetFileId<E> = (dyn Fn(&Path) -> Result<String, E>);
+
 pub fn find_doubles(comp: Comparison, dir: PathBuf) -> HashMap<String, Vec<PathBuf>> {
-    thread::scope(move |s| {
-        let (tx, rx) = mpsc::channel();
+    let mut files = HashMap::new();
+    match comp {
+        Comparison::FileName => enter_dir(&mut files, dir, &get_file_id_by_file_name),
+        Comparison::Hash => enter_dir(&mut files, dir, &get_file_id_by_hash),
+        Comparison::Both => enter_dir(&mut files, dir, &get_file_id_by_both),
+    }
 
-        let handle = s.spawn(move || {
-            let mut files = HashMap::new();
-            for p in rx {
-                enter_file(&mut files, p, comp);
-            }
-            files
-        });
-
-        enter_dir(tx, dir);
-
-        handle.join().unwrap()
-    })
+    files
 }
 
-fn enter_file(
+fn enter_file<E: Display>(
     known_names: &mut HashMap<String, Vec<PathBuf>>,
     file_path: PathBuf,
-    comp: Comparison,
+    get_file_id: &FnGetFileId<E>,
 ) {
     /*
     if !file_path.is_file() {
@@ -41,13 +35,7 @@ fn enter_file(
     CF.fetch_add(1, Ordering::Relaxed);
 
     // println!("file {}", file_path.to_string_lossy());
-    let file_id = match comp {
-        Comparison::FileName => get_file_id_by_file_name(&file_path),
-        Comparison::Hash => get_file_id_by_hash(&file_path),
-        Comparison::Both => get_file_id_by_both(&file_path),
-    };
-
-    match file_id {
+    match get_file_id(&file_path) {
         Ok(file_id) => {
             let vec_opt = known_names.entry(file_id).or_default();
             vec_opt.push(file_path);
@@ -60,7 +48,11 @@ fn enter_file(
     }
 }
 
-fn enter_dir(known_names: mpsc::Sender<PathBuf>, dir_path: PathBuf) {
+fn enter_dir<E: Display>(
+    known_names: &mut HashMap<String, Vec<PathBuf>>,
+    dir_path: PathBuf,
+    get_file_id: &FnGetFileId<E>,
+) {
     /*
     if !dir_path.is_dir() {
         panic!("Not a directory : `{}`!", dir_path.to_string_lossy());
@@ -75,9 +67,9 @@ fn enter_dir(known_names: mpsc::Sender<PathBuf>, dir_path: PathBuf) {
             Ok(entry) => match entry.metadata() {
                 Ok(metadata) => {
                     if metadata.is_dir() {
-                        enter_dir(known_names.clone(), entry.path());
+                        enter_dir(known_names, entry.path(), get_file_id);
                     } else if metadata.is_file() {
-                        known_names.send(entry.path()).unwrap();
+                        enter_file(known_names, entry.path(), get_file_id);
                     }
                 }
                 Err(err) => eprintln!(

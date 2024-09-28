@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::fmt::Display;
 use std::fs::read_dir;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
@@ -10,12 +9,11 @@ extern crate loole;
 use loole::{unbounded, Sender};
 
 use super::{
-    display_doubles, get_file_id_by_both, get_file_id_by_file_name, get_file_id_by_hash,
-    Comparison, FnGetFileId, CD, CF,
+    get_file_id_by_both, get_file_id_by_file_name, get_file_id_by_hash, Comparison, CD, CF,
 };
 
-pub fn find_doubles<P: AsRef<Path>>(comp: Comparison, dir: &P) {
-    let files = thread::scope(move |s| {
+pub fn find_doubles(comp: Comparison, dir: PathBuf) -> HashMap<String, Vec<PathBuf>> {
+    thread::scope(move |s| {
         let (tx, rx) = unbounded::<PathBuf>();
         let frx = {
             let (ftx, frx) = mpsc::channel::<(String, PathBuf)>();
@@ -25,12 +23,7 @@ pub fn find_doubles<P: AsRef<Path>>(comp: Comparison, dir: &P) {
                 let rx = rx.clone();
                 s.spawn(move || {
                     for p in rx {
-                        let id = match comp {
-                            Comparison::FileName => enter_file(&p, &get_file_id_by_file_name),
-                            Comparison::Hash => enter_file(&p, &get_file_id_by_hash),
-                            Comparison::Both => enter_file(&p, &get_file_id_by_both),
-                        };
-                        if let Some(id) = id {
+                        if let Some(id) = enter_file(&p, comp) {
                             ftx.send((id, p)).unwrap();
                         }
                     }
@@ -49,19 +42,13 @@ pub fn find_doubles<P: AsRef<Path>>(comp: Comparison, dir: &P) {
             files
         });
 
-        enter_dir(tx, dir.as_ref().to_path_buf());
+        enter_dir(tx, dir);
 
         handle.join().unwrap()
-    });
-    println!(
-        "f {}, d {}",
-        CF.load(Ordering::Acquire),
-        CD.load(Ordering::Acquire)
-    );
-    display_doubles(&files);
+    })
 }
 
-fn enter_file<E: Display>(file_path: &Path, get_file_id: &FnGetFileId<E>) -> Option<String> {
+fn enter_file(file_path: &Path, comp: Comparison) -> Option<String> {
     /*
     if !file_path.is_file() {
         panic!("Not a file : `{}`!", file_path.to_string_lossy());
@@ -71,7 +58,13 @@ fn enter_file<E: Display>(file_path: &Path, get_file_id: &FnGetFileId<E>) -> Opt
     CF.fetch_add(1, Ordering::Relaxed);
 
     // println!("file {}", file_path.to_string_lossy());
-    get_file_id(file_path)
+    let file_id = match comp {
+        Comparison::FileName => get_file_id_by_file_name(file_path),
+        Comparison::Hash => get_file_id_by_hash(file_path),
+        Comparison::Both => get_file_id_by_both(file_path),
+    };
+
+    file_id
         .inspect_err(|err| {
             eprintln!(
                 "Error when getting file identifier for `{}` : {}",
