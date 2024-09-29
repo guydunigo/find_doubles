@@ -105,7 +105,25 @@ async fn enter_file(
         ),
     }
 
-    CF.fetch_sub(1, Ordering::Relaxed);
+    // CF.fetch_sub(1, Ordering::Relaxed);
+}
+
+// Have to create a special function so compiler doesn't detect recursion and keeps future  send ?
+fn spawn_dir(
+    ex: Arc<Executor<'_>>,
+    semaphore: Arc<Semaphore>,
+    known_names: Sender<(String, PathBuf)>,
+    entry_path: PathBuf,
+    comp: Comparison,
+) {
+    ex.spawn(enter_dir(
+        ex.clone(),
+        semaphore.clone(),
+        known_names.clone(),
+        entry_path,
+        comp,
+    ))
+    .detach();
 }
 
 async fn enter_dir(
@@ -132,8 +150,7 @@ async fn enter_dir(
     }
     */
 
-    // Vue qu'on ne spawn pas pour les dossiers, pas de risque de dépasser la limite.
-    // let _lock = semaphore.acquire().await;
+    let _lock = semaphore.acquire().await;
     /*
     if !dir_path.is_dir() {
         panic!("Not a directory : `{}`!", dir_path.to_string_lossy());
@@ -144,7 +161,6 @@ async fn enter_dir(
 
     // println!("{:?} dir  {}", semaphore, dir_path.to_string_lossy());
 
-    // let mut dirs = Vec::new();
     let mut files = Vec::new();
     match read_dir(&dir_path).await {
         Ok(mut entries) => {
@@ -153,33 +169,13 @@ async fn enter_dir(
                     Ok(entry) => match entry.metadata().await {
                         Ok(metadata) => {
                             if metadata.is_dir() {
-                                // TODO enter_dir future is not Send, because of recursion ?
-                                /*
-                                dirs.push(enter_dir(
+                                spawn_dir(
                                     ex.clone(),
                                     semaphore.clone(),
                                     known_names.clone(),
                                     entry.path(),
                                     comp,
-                                ));
-                                */
-                                /*
-                                ex.spawn(enter_dir(
-                                    ex.clone(),
-                                    semaphore.clone(),
-                                    known_names.clone(),
-                                    entry.path(),
-                                    comp,
-                                )).detach();
-                                */
-                                Box::pin(enter_dir(
-                                    ex.clone(),
-                                    semaphore.clone(),
-                                    known_names.clone(),
-                                    entry.path(),
-                                    comp,
-                                ))
-                                .await;
+                                );
                             } else if metadata.is_file() {
                                 files.push(enter_file(
                                     semaphore.clone(),
@@ -213,18 +209,11 @@ async fn enter_dir(
         }
     }
 
-    /*
-    if !dirs.is_empty() {
-        let mut dirs_tasks = Vec::with_capacity(dirs.len());
-        ex.spawn_many(dirs, &mut dirs_tasks);
-        dirs_tasks.into_iter().for_each(Task::detach);
-    }
-    */
     if !files.is_empty() {
         let mut files_tasks = Vec::with_capacity(files.len());
         ex.spawn_many(files, &mut files_tasks);
         files_tasks.into_iter().for_each(Task::detach);
     }
 
-    CD.fetch_sub(1, Ordering::Relaxed);
+    // CD.fetch_sub(1, Ordering::Relaxed);
 }
