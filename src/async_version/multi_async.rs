@@ -18,6 +18,7 @@ use super::{
 
 pub fn find_doubles(comp: Comparison, dir: PathBuf) -> HashMap<String, Vec<PathBuf>> {
     thread::scope(|s| {
+        // TODO: remove Arc by moving executer outside ?
         let ex = Arc::new(Executor::new());
         let num_threads = thread::available_parallelism().unwrap().into();
         let mut txs = Vec::with_capacity(num_threads);
@@ -25,7 +26,11 @@ pub fn find_doubles(comp: Comparison, dir: PathBuf) -> HashMap<String, Vec<PathB
         for _ in 0..=num_threads {
             let ex = ex.clone();
             let (tx, rx) = bounded(1);
-            s.spawn(move || smol::block_on(ex.run(rx.recv())));
+            s.spawn(move || {
+                smol::block_on(ex.run(async {
+                    rx.recv().await.unwrap();
+                }))
+            });
             txs.push(tx);
         }
 
@@ -33,6 +38,7 @@ pub fn find_doubles(comp: Comparison, dir: PathBuf) -> HashMap<String, Vec<PathB
         smol::block_on(ex.run(async {
             let files = find_doubles_async(ex2, comp, dir).await;
 
+            // TODO: might not need to send, just to drop, but it creates a receive err.
             for tx in txs {
                 tx.send(()).await.unwrap();
             }
@@ -53,7 +59,8 @@ async fn find_doubles_async(
 
     let semaphore = Arc::new(Semaphore::new(MAX_OPEN_FILES));
 
-    enter_dir(ex, semaphore, tx, dir, comp).await;
+    ex.spawn(enter_dir(ex.clone(), semaphore, tx, dir, comp))
+        .detach();
 
     pin!(rx);
 
@@ -72,7 +79,7 @@ async fn enter_file(
 ) {
     let _lock = semaphore.acquire().await;
 
-    CF.fetch_add(1, Ordering::Acquire);
+    CF.fetch_add(1, Ordering::Relaxed);
 
     /*
     if !file_path.is_file() {
@@ -98,7 +105,7 @@ async fn enter_file(
         ),
     }
 
-    // CF.fetch_sub(1, Ordering::Release);
+    CF.fetch_sub(1, Ordering::Relaxed);
 }
 
 async fn enter_dir(
@@ -116,25 +123,24 @@ async fn enter_dir(
         .filter(|e| *e == '0')
         .is_some();
     if is_zero {
-        CF.with_borrow(|cf| {
-            CD.with_borrow(|cd| {
-                eprintln!(
-                    "Semaphore will block | f {}, d {} | {:?}",
-                    cf, cd, semaphore
-                )
-            })
-        });
+        eprintln!(
+            "Semaphore will block | f {}, d {} | {:?}",
+            CF.load(Ordering::Acquire),
+            CD.load(Ordering::Acquire),
+            semaphore
+        )
     }
     */
 
-    let _lock = semaphore.acquire().await;
+    // Vue qu'on ne spawn pas pour les dossiers, pas de risque de dépasser la limite.
+    // let _lock = semaphore.acquire().await;
     /*
     if !dir_path.is_dir() {
         panic!("Not a directory : `{}`!", dir_path.to_string_lossy());
     }
     */
 
-    CD.fetch_add(1, Ordering::Acquire);
+    CD.fetch_add(1, Ordering::Relaxed);
 
     // println!("{:?} dir  {}", semaphore, dir_path.to_string_lossy());
 
@@ -147,8 +153,8 @@ async fn enter_dir(
                     Ok(entry) => match entry.metadata().await {
                         Ok(metadata) => {
                             if metadata.is_dir() {
+                                // TODO enter_dir future is not Send, because of recursion ?
                                 /*
-                                // TODO enter_dir future is not Send
                                 dirs.push(enter_dir(
                                     ex.clone(),
                                     semaphore.clone(),
@@ -156,6 +162,15 @@ async fn enter_dir(
                                     entry.path(),
                                     comp,
                                 ));
+                                */
+                                /*
+                                ex.spawn(enter_dir(
+                                    ex.clone(),
+                                    semaphore.clone(),
+                                    known_names.clone(),
+                                    entry.path(),
+                                    comp,
+                                )).detach();
                                 */
                                 Box::pin(enter_dir(
                                     ex.clone(),
@@ -211,5 +226,5 @@ async fn enter_dir(
         files_tasks.into_iter().for_each(Task::detach);
     }
 
-    // CD.fetch_sub(1, Ordering::Release);
+    CD.fetch_sub(1, Ordering::Relaxed);
 }

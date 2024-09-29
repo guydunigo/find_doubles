@@ -6,9 +6,9 @@ use std::process::exit;
 
 use find_doubles::{find_doubles, Backend, Comparison};
 
-// TODO
 const DEFAULT_COMP: &str = find_doubles::COMP_NAME;
-const DEFAULT_BACK: &str = find_doubles::BACK_MULTI_THREADED;
+const DEFAULT_BACK_FILENAME: &str = find_doubles::BACK_SYNC;
+const DEFAULT_BACK_HASH: &str = find_doubles::BACK_MULTI_THREADED;
 
 const ERROR_CODE_BAD_COMP: i32 = 1;
 const ERROR_CODE_BAD_DIR: i32 = 2;
@@ -48,7 +48,14 @@ fn main() {
 
     let backend: Backend = match backend_arg3
         .as_ref()
-        .map_or(DEFAULT_BACK, |e| &e[..])
+        .map_or(
+            if let Comparison::FileName = comp {
+                DEFAULT_BACK_FILENAME
+            } else {
+                DEFAULT_BACK_HASH
+            },
+            |e| &e[..],
+        )
         .parse()
     {
         Ok(backend) => backend,

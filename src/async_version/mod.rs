@@ -18,9 +18,11 @@ use super::{Comparison, CD, CF};
 
 pub mod multi_async;
 
-const MAX_OPEN_FILES: usize = 1000;
+const MAX_OPEN_FILES: usize = 10;
 
 pub fn find_doubles(comp: Comparison, dir: PathBuf) -> HashMap<String, Vec<PathBuf>> {
+    // Should be possible of getting rid of Rc and just use references, but it seems
+    // the reference in or of the executor outlives here...
     let ex = Rc::new(LocalExecutor::new());
     smol::block_on(ex.run(find_doubles_async(ex.clone(), comp, dir)))
 }
@@ -55,7 +57,7 @@ async fn enter_file(
 ) {
     let _lock = semaphore.acquire().await;
 
-    CF.fetch_add(1, Ordering::Acquire);
+    CF.fetch_add(1, Ordering::Relaxed);
 
     /*
     if !file_path.is_file() {
@@ -81,7 +83,7 @@ async fn enter_file(
         ),
     }
 
-    // CF.fetch_sub(1, Ordering::Release);
+    // CF.fetch_sub(1, Ordering::Relaxed);
 }
 
 async fn enter_dir(
@@ -116,7 +118,7 @@ async fn enter_dir(
     }
     */
 
-    CD.fetch_add(1, Ordering::Acquire);
+    CD.fetch_add(1, Ordering::Relaxed);
 
     // println!("{:?} dir  {}", semaphore, dir_path.to_string_lossy());
 
@@ -180,7 +182,7 @@ async fn enter_dir(
         files_tasks.into_iter().for_each(Task::detach);
     }
 
-    // CD.fetch_sub(1, Ordering::Release);
+    // CD.fetch_sub(1, Ordering::Relaxed);
 }
 
 async fn get_file_id_by_file_name(file: &Path) -> Result<String, String> {

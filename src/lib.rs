@@ -83,7 +83,7 @@ impl FromStr for Backend {
             _ => {
                 return Err(format!(
                     "Could not parse `{}` as backend, please use `{}`, `{}`, `{}`, `{}`, or `{}`.",
-                    s, BACK_SYNC, BACK_ASYNC, BACK_MULTI_ASYNC, BACK_THREADED, BACK_MULTI_ASYNC,
+                    s, BACK_SYNC, BACK_ASYNC, BACK_MULTI_ASYNC, BACK_THREADED, BACK_MULTI_THREADED,
                 ));
             }
         };
@@ -101,9 +101,9 @@ pub fn find_doubles(enable_output: bool, comp: Comparison, backend: Backend, dir
         eprintln!("--------------------------------------------------------------------------------------------------------------------------------\n");
         find_doubles(enable_output, comp, Backend::Sync, dir.clone());
         find_doubles(enable_output, comp, Backend::Async, dir.clone());
-        find_doubles(enable_output, comp, Backend::MultiAsync, dir.clone());
         find_doubles(enable_output, comp, Backend::Threaded, dir.clone());
         find_doubles(enable_output, comp, Backend::MultiThreaded, dir.clone());
+        find_doubles(enable_output, comp, Backend::MultiAsync, dir.clone());
         return;
     }
 
